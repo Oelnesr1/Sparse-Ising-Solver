@@ -16,7 +16,7 @@ To compile this program, run:
 To run the program, there are two different modes. To run it with custom settings, run:
 
 ```
-    ./program <default?> <.mtx/.tsp> <output file> <maxcut/tsp> <update_window?> <fused?> <random?> <time_step> <max_steps> <num_agents>
+    ./build/program <default?> <.mtx/.tsp> <output file> <maxcut/tsp> <update_window?> <fused?> <random?> <time_step> <max_steps> <num_agents>
 ```
 
 Where:
