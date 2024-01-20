@@ -41,7 +41,7 @@ Where:
 
   - time_step: a float, default is 0.1. Determines how much time passes between every step. Lower time steps are slower with higher solution qualities, and higher time steps are faster but with erratic behavior. Fused kernel can handle larger time step sizes.
 
-  - max_steps: an integer, default is 10'000. Determines how many iterations the solver takes when solving a problem instance. For larger problem sizes, max_steps may need to be increased.
+  - max_steps: an integer, default is 10,000. Determines how many iterations the solver takes when solving a problem instance. For larger problem sizes, max_steps may need to be increased.
 
   - agents: an integer, default is 1024. Determines the number of "agents", or parallel instances that are solved simultaneously. More agents increase the probability of reaching a better solution, and when combined with the fused kernels, increase the solver's resilience to higher time steps. Too many agents will slow down the solver.
 
