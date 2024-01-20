@@ -50,7 +50,7 @@ Where:
 To run it with default settings, run:
 
 ```
-    ./program <default?> <.mtx/.tsp> <output file>
+    ./build/program <default?> <.mtx/.tsp> <output file>
 ```
 
 
