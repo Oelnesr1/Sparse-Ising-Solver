@@ -72,32 +72,36 @@ void Ising_TSP::reset_initialization(TSP_GPU &tsp_gpu, CSR& csr_cpu, CSR_GPU& cs
         double mean = sum / (nrows*nrows);
 
         for( int i = 0; i < csr_cpu.nonzeros; i++) {
-            nonzero_contribution += std::pow((csr_cpu.csr_data[i] - mean), 2);
+            // nonzero_contribution += std::pow((csr_cpu.csr_data[i] - mean), 2);
+            nonzero_contribution += std::pow(csr_cpu.csr_data[i], 2);
         }
 
-        zero_contribution = (nrows*nrows - csr_cpu.nonzeros) * mean * mean;
+        // zero_contribution = (nrows*nrows - csr_cpu.nonzeros) * mean * mean;
 
         sum = nonzero_contribution + zero_contribution;
 
         double variance = std::pow((sum / (nrows*nrows - 1)), 0.5);
-        xi0 = 0.7 / (variance * std::pow(nrows, 0.5));
+        xi0 = 0.5 / (variance * std::pow(nrows, 0.5));
     }
 
     A = tsp_gpu.A;
     B = tsp_gpu.B;
     C = tsp_gpu.C;
 
-    checkCudaErrors(cudaMemset(step_gpu, 0, sizeof(int)));
-    checkCudaErrors(cudaMemset(city_visits_gpu, 0, ncities*ncols*sizeof(int)));
-    checkCudaErrors(cudaMemset(order_visits_gpu, 0, ncities*ncols*sizeof(int)));
+    checkCudaErrors(cudaMemcpy(X_gpu, X_cpu, double_bytes_SIZE, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(Y_gpu, Y_cpu, double_bytes_SIZE, cudaMemcpyHostToDevice));
+
+
     checkCudaErrors(cudaMemset(current_spins_gpu, -1, int_bytes_SIZE));
     checkCudaErrors(cudaMemset(final_spins_gpu, -1, int_bytes_SIZE));
+
     checkCudaErrors(cudaMemset(bifurcated_gpu, 0, bool_bytes_ncols));
     checkCudaErrors(cudaMemset(prev_bifurcated_gpu, 0, bool_bytes_ncols));
     checkCudaErrors(cudaMemset(valid_list_gpu, 0, ncols*sizeof(int)));
 
-    checkCudaErrors(cudaMemcpy(X_gpu, X_cpu, double_bytes_SIZE, cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy(Y_gpu, Y_cpu, double_bytes_SIZE, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemset(city_visits_gpu, 0, ncities*ncols*sizeof(int)));
+    checkCudaErrors(cudaMemset(order_visits_gpu, 0, ncities*ncols*sizeof(int)));
+    checkCudaErrors(cudaMemset(step_gpu, 0, sizeof(int)));
 
     run = true;
     step = 0;
@@ -116,6 +120,8 @@ double Ising_TSP::symplectic_update(TSP_GPU &tsp_gpu, CSR& csr_cpu, CSR_GPU& csr
 
     long int total_time = 0;
 
+    // prepare the CUDA graph
+
     cudaGraph_t graph;
     cudaGraphExec_t instance;
     cudaStream_t stream;
@@ -123,6 +129,7 @@ double Ising_TSP::symplectic_update(TSP_GPU &tsp_gpu, CSR& csr_cpu, CSR_GPU& csr
     cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal);
 
     int j_max = 1;
+    sampling_period = max_steps / 10;
     int i_max = sampling_period;
     int n = 2;
 
@@ -139,11 +146,13 @@ double Ising_TSP::symplectic_update(TSP_GPU &tsp_gpu, CSR& csr_cpu, CSR_GPU& csr
     cudaStreamEndCapture(stream, &graph);
     cudaGraphInstantiate(&instance, graph, NULL, NULL, 0);
 
-    double pressure = 0;
+    // double pressure = 0;
+
+    // start timing the algorithm
 
     auto start4 = std::chrono::high_resolution_clock::now();
 
-    Update_XY<<<blocksPerGrid, threadsPerBlock>>>(X_gpu, Y_gpu, pressure, time_step, ncols, nrows);
+    Update_XY<<<blocksPerGrid, threadsPerBlock>>>(X_gpu, Y_gpu, step_gpu, max_steps, time_step, ncols, nrows);
 
     while (run)
     {
@@ -158,19 +167,23 @@ double Ising_TSP::symplectic_update(TSP_GPU &tsp_gpu, CSR& csr_cpu, CSR_GPU& csr
     auto duration4 = std::chrono::duration_cast<std::chrono::microseconds>(stop4 - start4);
     total_time += duration4.count();
 
+    // finish timing the algorithm, copy everything important from the GPU to the CPU
+
     tsp_spin_average<<<blocksPerGrid, threadsPerBlock>>>(current_spins_gpu, average_spin_gpu, ncities, ncols, nrows);
     cudaMemcpy(average_spin_cpu, average_spin_gpu, nrows*sizeof(double), cudaMemcpyDeviceToHost);
     cudaMemcpy(final_spins_cpu, final_spins_gpu, int_bytes_SIZE, cudaMemcpyDeviceToHost);
     cudaMemcpy(current_spins_cpu, current_spins_gpu, int_bytes_SIZE, cudaMemcpyDeviceToHost);
     cudaMemcpy(valid_list_cpu, valid_list_gpu, ncols*sizeof(int), cudaMemcpyDeviceToHost);
 
-    std::cout << "\n";
+    // std::cout << "\n";
 
     vector<int> valid_agents;
     vector<double> all_distances;
     double total_sum = 0;
     double minimum = DBL_MAX;
     double maximum = - DBL_MAX;
+
+    // get all valid solutions and the corresponding agent
 
     int valid_col = -1;
     int valid_sum = 0;
@@ -186,8 +199,6 @@ double Ising_TSP::symplectic_update(TSP_GPU &tsp_gpu, CSR& csr_cpu, CSR_GPU& csr
         }
     }
 
-    std::cout << "\n";
-
     for (int j = 0; j < valid_sum; j++) {
 
     int cur_agent = valid_agents.at(j);
@@ -202,28 +213,15 @@ double Ising_TSP::symplectic_update(TSP_GPU &tsp_gpu, CSR& csr_cpu, CSR_GPU& csr
         }
     }
 
-    double sum = 0.0f;
-    int city1, city2;
+    double tour_distance = calculate_distance_of_tour(tsp_gpu, cities, ncities);
+    all_distances.push_back(tour_distance);
 
-    for (int i = 0; i < ncities; i++) {
-        if (i == ncities-1) {
-            city1 = min(cities.at(ncities-1), cities.at(0));
-            city2 = max(cities.at(ncities-1), cities.at(0));
-        } else {
-            city1 = min(cities.at(i), cities.at(i+1));
-            city2 = max(cities.at(i), cities.at(i+1));
+        total_sum += tour_distance;
+        if (tour_distance < minimum) {
+            minimum = tour_distance;
         }
-        int pos = city2 + (city1 * ncities) - ((city1+2)*(city1+1)/ 2);
-        sum += tsp_gpu.cpu_distances[pos];
-    }
-    all_distances.push_back(sum);
-
-        total_sum += sum;
-        if (sum < minimum) {
-            minimum = sum;
-        }
-        if (sum > maximum) {
-            maximum = sum;
+        if (tour_distance > maximum) {
+            maximum = tour_distance;
         }
 
     }
@@ -240,12 +238,15 @@ double Ising_TSP::symplectic_update(TSP_GPU &tsp_gpu, CSR& csr_cpu, CSR_GPU& csr
     }
     std_dev = pow(std_dev / (valid_sum-1), 0.5);
 
-    std::cout << "\nvalid sum: " << valid_sum << "\n";
+    // std::cout << "\nvalid sum: " << valid_sum << "\n";
     
-    std::cout << "minimum: " << minimum << "\n";
-    std::cout << "maximum: " << maximum << "\n";
-    std::cout << "average: " << average << "\n";
-    std::cout << "standard deviation: " << std_dev << "\n";
+    // std::cout << "minimum: " << minimum << "\n";
+    // std::cout << "maximum: " << maximum << "\n";
+    // std::cout << "average: " << average << "\n";
+    // std::cout << "standard deviation: " << std_dev << "\n";
+
+    file << total_time << ", " << minimum << ", " << maximum << ", " << average << ", " << std_dev << ", " << valid_sum << ", ";
+    std::cout << "time: " << total_time << ", vagents: " << valid_sum << ", steps: " << max_steps << ", max: " << maximum << ", min: " << minimum << ", average: " << average << ", Std Dev: " << std_dev << "\n";
 
     return 0;
     
@@ -255,29 +256,32 @@ void Ising_TSP::generate_random(TSP_CPU& tsp_cpu, TSP_GPU &tsp_gpu) {
     int ncities = tsp_cpu.ncities;
     std::vector<int> cities;
 
-    double sum = 0.0f;
-    int city1, city2;
-
     for (int i = 0; i < ncities; i++) {
         cities.push_back(i);
     }
     std::random_shuffle(std::begin(cities), std::end(cities));
 
+    double tour_distance = calculate_distance_of_tour(tsp_gpu, cities, ncities);
+    std::cout << "\n";
 
+    std::cout << "traveling salesman distance from random spin assignment: " << tour_distance << "\n";
+
+    
+}
+
+double Ising_TSP::calculate_distance_of_tour(TSP_GPU &tsp_gpu, vector<int> cities, int ncities) {
+    double sum = 0.0f;
+    int city1, city2;
     for (int i = 0; i < ncities; i++) {
-        if (i == 0) {
+        if (i == ncities-1) {
             city1 = min(cities.at(ncities-1), cities.at(0));
             city2 = max(cities.at(ncities-1), cities.at(0));
         } else {
-            city1 = min(cities.at(i-1), cities.at(i));
-            city2 = max(cities.at(i-1), cities.at(i));
+            city1 = min(cities.at(i), cities.at(i+1));
+            city2 = max(cities.at(i), cities.at(i+1));
         }
         int pos = city2 + (city1 * ncities) - ((city1+2)*(city1+1)/ 2);
         sum += tsp_gpu.cpu_distances[pos];
     }
-    std::cout << "\n";
-
-    std::cout << "traveling salesman distance from random spin assignment: " << sum << "\n";
-
-    
+    return sum;
 }

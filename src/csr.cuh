@@ -96,26 +96,26 @@ public:
 
 class Ising {
 public:
-    Ising(CSR& csr_cpu, CSR_GPU &csr_gpu);
-    void initialize(CSR& csr_cpu, CSR_GPU &csr_gpu);
+    Ising(CSR& csr_cpu, CSR_GPU &csr_gpu, double time_step = 0.1, int agents = 1000);
+    ~Ising();
+    void initialize(CSR& csr_cpu, CSR_GPU &csr_gpu, double param_time_step, int agents);
     void reset_initialization(CSR& csr_cpu, CSR_GPU &csr_gpu);
-    double symplectic_update(CSR& csr_cpu, CSR_GPU& csr_gpu, std::ofstream& file, int max_steps = 10000);
+    double symplectic_update(CSR& csr_cpu, CSR_GPU& csr_gpu, std::ofstream& file, bool uw, bool fused, int max_steps = 10000);
     void generate_random(CSR& csr_cpu, CSR_GPU& csr_gpu);
     
 private:
 // parameters
-    int convergence_threshold = 50;
-    int sampling_period = 50;
+    int convergence_threshold = 25;
+    int sampling_period = 100;
     int max_steps = 10000;
-    int agents = 1000;
-    double time_step = 0.1;
+    // int agents = 1000;
+    double time_step;
     double pressure_slope = 0.01;
     
     int nrows;
     int ncols;
     int SIZE;
 
-    double* cut_array_cpu;
     double* cut_array_gpu;
     double* final_cut_array_cpu;
     double* final_cut_array_gpu;
@@ -128,18 +128,12 @@ private:
     double* X_gpu;
     double* Y_gpu;
 
-    int* current_spins_cpu;
-    int* final_spins_cpu;
-
     int* current_spins_gpu;
     int* final_spins_gpu;
 
     int* stability_gpu;
-    int* stability_cpu;
-    bool* bool_init;
 
     bool* bifurcated_cpu;
-    bool* prev_bifurcated_cpu;
 
     bool* bifurcated_gpu;
     bool* prev_bifurcated_gpu;
@@ -156,6 +150,7 @@ private:
     size_t int_bytes_large;
     size_t int_bytes_small;
     size_t bool_bytes;
+    size_t int_bytes_ncols;
 };
 
 class Ising_TSP {
@@ -165,11 +160,12 @@ public:
     void reset_initialization(TSP_GPU &tsp_gpu, CSR& csr_cpu, CSR_GPU& csr_gpu);
     double symplectic_update(TSP_GPU &tsp_gpu, CSR& csr_cpu, CSR_GPU& csr_gpu, std::ofstream& file, int max_steps = 10000);
     void generate_random(TSP_CPU& tsp_cpu, TSP_GPU &tsp_gpu);
+    double calculate_distance_of_tour(TSP_GPU &tsp_gpu, vector<int> cities, int ncities);
     
 private:
 // parameters
     int convergence_threshold = 50;
-    int sampling_period = 10;
+    int sampling_period = 25;
     int max_steps = 10000;
     int agents = 10000;
     double time_step = 0.1;
